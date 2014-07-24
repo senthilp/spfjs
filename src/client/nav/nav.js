@@ -685,7 +685,7 @@ spf.nav.handleNavigateSuccess_ = function(options, reverse, original,
       // TODO(nicksay): Remove deprecated "processed" event after next release.
       spf.dispatch(spf.nav.DeprecatedEvents.PROCESSED,
                    {'url': url, 'response': response});
-    }, true, reverse, true);
+    }, true, reverse);
   } catch (err) {
     // If an exception is caught during processing, log, execute the error
     // handler and bail.
