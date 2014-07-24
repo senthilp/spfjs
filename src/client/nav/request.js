@@ -121,7 +121,7 @@ spf.nav.request.send = function(url, opt_options) {
       headers['X-SPF-Previous'] = options.current;
     }
     // Adding x-requested-with header to indicate AJAX for server 
-    headers["x-requested-with"] = "XMLHttpRequest";
+    headers['x-requested-with'] = 'XMLHttpRequest';
     var chunking = {
       multipart: false,
       extra: '',
