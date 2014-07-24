@@ -97,6 +97,8 @@ spf.nav.request.send = function(url, opt_options) {
   // Use the absolute URL without identifier to allow cached responses
   // from prefetching to apply to navigation.
   var cached = spf.nav.request.getCacheObject_(cacheKey, options.current);
+  // The xhrObject to return, be default null
+  var xhrObject = null;
   if (cached) {
     var response = /** @type {spf.SingleResponse|spf.MultipartResponse} */ (
         cached.response);
@@ -105,8 +107,6 @@ spf.nav.request.send = function(url, opt_options) {
     var handleCache = spf.bind(spf.nav.request.handleResponseFromCache_, null,
                                url, options, timing, cached.key, response);
     setTimeout(handleCache, 0);
-    // Return null because no XHR is made.
-    return null;
   } else {
     spf.debug.debug('    sending XHR');
     var headers = {};
@@ -117,6 +117,8 @@ spf.nav.request.send = function(url, opt_options) {
     if (options.current) {
       headers['X-SPF-Previous'] = options.current;
     }
+    // Adding the x-requested-with header to denote AJAX (XMLHttpRequest)
+    headers['x-requested-with'] = 'XMLHttpRequest';
     var chunking = {
       multipart: false,
       extra: '',
@@ -142,9 +144,13 @@ spf.nav.request.send = function(url, opt_options) {
     } else {
       xhr = spf.net.xhr.get(requestUrl, xhrOpts);
     }
-    // Return the XHR being made.
-    return xhr;
+    // Set the XHR being made.
+    xhrObject = xhr;
   }
+  // Dispatch event
+  spf.dispatch('xhrsent');
+  // Return the xhrObject
+  return xhrObject;
 };
 
 

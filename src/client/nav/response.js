@@ -119,9 +119,11 @@ spf.nav.response.parse = function(text, opt_multipart, opt_lastDitch) {
  * @param {boolean=} opt_reverse Whether this is "backwards" navigation. True
  *     when the "back" button is clicked and a request is in response to a
  *     popState event.
+ * @param {boolean=} opt_final Whether this is the final chunk in multi-part.
+ *     Always true for single chunks. 
  */
 spf.nav.response.process = function(url, response, opt_callback, opt_navigate,
-                                    opt_reverse) {
+                                    opt_reverse, opt_final) {
   spf.debug.info('nav.response.process ', response, opt_reverse);
 
   // Convert the URL to absolute, to be used for finding the task queue.
@@ -186,15 +188,26 @@ spf.nav.response.process = function(url, response, opt_callback, opt_navigate,
   // Update content (one task per fragment or three tasks if animated).
   var fragments = response['html'] || {};
   var numBeforeFragments = num;
+  var fragmentCount = Object.keys(fragments).length;
+  var fragmentIndex = 0;
+  // Set the scrips loaded flags to true
+  var elementScriptsLoaded = true; 
+  var pageScriptsLoaded = true;
   for (var id in fragments) {
+    // Set elementScriptsLoaded to false
+    elementScriptsLoaded = false;
     fn = spf.bind(function(id, html, timing) {
+      // Increment fragment index
+      fragmentIndex++;
       var el = document.getElementById(id);
-      if (el) {
+      if (el) {              
         var jsParseResult = spf.nav.response.parseScripts_(html);
         var animationClass = /** @type {string} */ (
             spf.config.get('animation-class'));
         var noAnimation = (!spf.nav.response.CAN_ANIMATE_ ||
                            !spf.dom.classlist.contains(el, animationClass));
+        // Dispatch htmlbeforereplace
+        spf.dispatch('htmlbeforereplace', {"id": id});
         if (noAnimation) {
           // Use the parsed HTML without script tags to avoid any scripts
           // being accidentally considered loading.
@@ -207,6 +220,10 @@ spf.nav.response.process = function(url, response, opt_callback, opt_navigate,
           //     using a sub-queue for JS execution.
           spf.tasks.suspend(key);
           spf.nav.response.installScripts_(jsParseResult, function() {
+            // Set elementScriptsLoaded to true if count macthes and dispatch
+            elementScriptsLoaded = fragmentIndex === fragmentCount;
+            spf.nav.response.dispatchScriptLoaded_(elementScriptsLoaded, 
+              pageScriptsLoaded, opt_final);
             spf.debug.debug('    html js', id);
             spf.tasks.resume(key, sync);  // Resume main queue after JS.
             spf.debug.debug('  process task done: html', id);
@@ -275,6 +292,10 @@ spf.nav.response.process = function(url, response, opt_callback, opt_navigate,
             // Execute embedded scripts before continuing.
             spf.tasks.suspend(animationKey);  // Suspend sub-queue for JS.
             spf.nav.response.installScripts_(data.jsParseResult, function() {
+              // Set elementScriptsLoaded to true if count macthes and dispatch
+              elementScriptsLoaded = fragmentIndex === fragmentCount;
+              spf.nav.response.dispatchScriptLoaded_(elementScriptsLoaded,
+                pageScriptsLoaded, opt_final);               
               spf.debug.debug('    html js', data.parentEl.id);
               spf.tasks.resume(animationKey);  // Resume sub-queue after JS.
               spf.debug.debug('  process anim done: del old', data.parentEl.id);
@@ -293,6 +314,11 @@ spf.nav.response.process = function(url, response, opt_callback, opt_navigate,
           spf.debug.debug('  process anim queued: complete', id);
           spf.tasks.run(animationKey);
         }
+      } else {
+        // Set elementScriptsLoaded to true if count macthes and dispatch
+        elementScriptsLoaded = fragmentIndex === fragmentCount;
+        spf.nav.response.dispatchScriptLoaded_(elementScriptsLoaded,
+          pageScriptsLoaded, opt_final);               
       }
     }, null, id, fragments[id], response['timing']);
     num = spf.tasks.add(key, fn);
@@ -303,6 +329,8 @@ spf.nav.response.process = function(url, response, opt_callback, opt_navigate,
 
   // Install page scripts (single task), if needed.
   if (response['foot'] || response['js']) {
+    // Set the pageScriptsLoaded to false
+    pageScriptsLoaded = false;
     fn = spf.bind(function(js, timing, numFragments) {
       // Use the page scripts task as a signal that the content is updated,
       // only recording the content completion time if fragments were processed.
@@ -313,6 +341,10 @@ spf.nav.response.process = function(url, response, opt_callback, opt_navigate,
       spf.nav.response.installScripts_(
           spf.nav.response.parseScripts_(js),
           function() {
+            // set flag and call the dispather
+            pageScriptsLoaded = true;
+            spf.nav.response.dispatchScriptLoaded_(elementScriptsLoaded, 
+              pageScriptsLoaded, opt_final);            
             timing['spfProcessJs'] = spf.now();
             spf.debug.debug('  process task done: js');
             spf.tasks.resume(key, sync);  // Resume main queue after JS.
@@ -637,6 +669,22 @@ spf.nav.response.ParseStylesResult_ = function() {
   this.styles = [];
 };
 
+
+/**
+ * Dispatches the scriptloaded custom event based on the input parameters
+ * @param {boolean=} elementScriptsLoaded Indicates if element level 
+ *     scripts in the body(html attribute) are loaded.
+ * @param {boolean=} pageScriptsLoaded Indicates if page level 
+ *     scripts in the foot attribute are loaded.
+ * @param {boolean=} opt_final Indicates final chunk.
+ * @private
+ */
+spf.nav.response.dispatchScriptLoaded_ = function(elementScriptsLoaded, 
+                                          pageScriptsLoaded, opt_final) {
+  if(elementScriptsLoaded && pageScriptsLoaded && opt_final) {
+    spf.dispatch('scriptloaded');
+  }
+};
 
 
 /**

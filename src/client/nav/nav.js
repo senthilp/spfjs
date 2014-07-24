@@ -652,7 +652,7 @@ spf.nav.handleNavigateSuccess_ = function(options, reverse, original,
       }
       spf.dispatch(spf.nav.Events.PROCESSED,
                    {'url': url, 'response': response});
-    }, true, reverse);
+    }, true, reverse, true);
   } catch (err) {
     // If an exception is caught during processing, log, execute the error
     // handler and bail.
