@@ -5,6 +5,7 @@
 
 MAKEFLAGS = -j 1
 NINJA = $(shell command -v ninja || echo vendor/ninja/ninja)
+PYTHON = $(shell command -v python || echo _missing_python_)
 
 
 # Always execute targets.
@@ -44,7 +45,7 @@ tests:
 demo:
 	@$(NINJA) demo
 	@echo "Running demo..."
-	@cd build/demo && python -m app
+	@cd build/demo && $(PYTHON) -m app
 
 
 # Get back to a newly-cloned state.
@@ -53,10 +54,18 @@ reset:
 	@rm -rf vendor/closure-compiler vendor/jasmine vendor/ninja vendor/webpy
 
 
-# Ensure a build file exists before actually running Ninja.
+# Ensure a build file exists before running Ninja.
+# Output a status message when Ninja is run.
 $(NINJA) vendor/ninja/ninja: build.ninja
-
+	@echo "Running Ninja..."
 
 # The configure script generates the build file and handles dependencies.
-build.ninja:
-	@python ./configure.py
+build.ninja: $(PYTHON)
+	@$(PYTHON) ./configure.py
+
+
+# Python is required to run the configure script.
+_missing_python_:
+	@echo "ERROR: Unable to find python."
+	@echo "Please install python and try again."
+	@exit 1
