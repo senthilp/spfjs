@@ -33,17 +33,17 @@ goog.require('spf.url');
  */
 spf.nav.init = function() {
   spf.history.init(spf.nav.handleHistory_, spf.nav.dispatchError_);
-  if (!spf.state.get('nav-init') && document.addEventListener) {
+  if (!spf.state.get(spf.state.Key.NAV_INIT) && document.addEventListener) {
     document.addEventListener('click', spf.nav.handleClick_, false);
-    if (spf.config.get('prefetch-on-mousedown') &&
+    if (spf.config.get('experimental-prefetch-mousedown') &&
         !spf.nav.isTouchCapablePlatform_()) {
       document.addEventListener('mousedown', spf.nav.handleMouseDown_, false);
-      spf.state.set('prefetch-listener', spf.nav.handleMouseDown_);
+      spf.state.set(spf.state.Key.PREFETCH_LISTENER, spf.nav.handleMouseDown_);
     }
-    spf.state.set('nav-init', true);
-    spf.state.set('nav-counter', 0);
-    spf.state.set('nav-time', spf.now());
-    spf.state.set('nav-listener', spf.nav.handleClick_);
+    spf.state.set(spf.state.Key.NAV_INIT, true);
+    spf.state.set(spf.state.Key.NAV_COUNTER, 0);
+    spf.state.set(spf.state.Key.NAV_TIME, spf.now());
+    spf.state.set(spf.state.Key.NAV_LISTENER, spf.nav.handleClick_);
   }
 };
 
@@ -53,20 +53,20 @@ spf.nav.init = function() {
  */
 spf.nav.dispose = function() {
   spf.nav.cancel();
-  if (spf.state.get('nav-init')) {
+  if (spf.state.get(spf.state.Key.NAV_INIT)) {
     if (document.removeEventListener) {
       document.removeEventListener('click', /** @type {function(Event)} */ (
-          spf.state.get('nav-listener')), false);
-      if (spf.config.get('prefetch-on-mousedown')) {
+          spf.state.get(spf.state.Key.NAV_LISTENER)), false);
+      if (spf.config.get('experimental-prefetch-mousedown')) {
         document.removeEventListener('mousedown',
             /** @type {function(Event)} */ (
-                spf.state.get('prefetch-listener')), false);
+                spf.state.get(spf.state.Key.PREFETCH_LISTENER)), false);
       }
     }
-    spf.state.set('nav-init', false);
-    spf.state.set('nav-counter', null);
-    spf.state.set('nav-time', null);
-    spf.state.set('nav-listener', null);
+    spf.state.set(spf.state.Key.NAV_INIT, false);
+    spf.state.set(spf.state.Key.NAV_COUNTER, null);
+    spf.state.set(spf.state.Key.NAV_TIME, null);
+    spf.state.set(spf.state.Key.NAV_LISTENER, null);
   }
   spf.history.dispose();
 };
@@ -165,29 +165,51 @@ spf.nav.getEventURL_ = function(evt) {
 
 
 /**
- * Whether this URL is eligible for navigation, according to callbacks,
- * navigation limits and session lifetime.
+ * Whether this URL is allowed for navigation, according to same-origin security
+ * policy.
  *
  * @param {string} url The URL to navigate to, without the SPF identifier.
  * @return {boolean}
  * @private
  */
-spf.nav.isNavigateEligible_ = function(url) {
+spf.nav.isAllowed_ = function(url) {
+  // If the destination is not same-origin, cancel.
+  // TODO(nicksay): Add CORS origin whitelist.
+  var destination = spf.url.origin(url);
+  if (destination != spf.url.origin(window.location.href)) {
+    spf.debug.warn('destination not same-origin');
+    return false;
+  }
+  return true;
+};
+
+
+/**
+ * Whether this URL is eligible for navigation, according to the configured
+ * limits and lifetime.
+ *
+ * @param {string} url The URL to navigate to, without the SPF identifier.
+ * @return {boolean}
+ * @private
+ */
+spf.nav.isEligible_ = function(url) {
   // If navigation is requested but SPF is not initialized, cancel.
-  if (!spf.state.get('nav-init')) {
+  if (!spf.state.get(spf.state.Key.NAV_INIT)) {
     spf.debug.warn('navigation not initialized');
     return false;
   }
   // If a session limit has been set and reached, cancel.
-  var count = (parseInt(spf.state.get('nav-counter'), 10) || 0) + 1;
+  var count = parseInt(spf.state.get(spf.state.Key.NAV_COUNTER), 10) || 0;
+  count++;
   var limit = parseInt(spf.config.get('navigate-limit'), 10);
   limit = isNaN(limit) ? Infinity : limit;
   if (count > limit) {
     spf.debug.warn('navigation limit reached');
     return false;
   }
-  // If a session lifetime has been set and reached, redirect.
-  var timestamp = parseInt(spf.state.get('nav-time'), 10) - 1;
+  // If a session lifetime has been set and reached, cancel.
+  var timestamp = parseInt(spf.state.get(spf.state.Key.NAV_TIME), 10);
+  timestamp--;
   var age = spf.now() - timestamp;
   var lifetime = parseInt(spf.config.get('navigate-lifetime'), 10);
   lifetime = isNaN(lifetime) ? Infinity : lifetime;
@@ -214,18 +236,24 @@ spf.nav.handleClick_ = function(evt) {
   }
   var url = spf.nav.getEventURL_(evt);
   if (url === null) {
-    // No relevant URL for event target.
+    // Ignore clicks if there's no relevant URL for the event target.
     return;
   }
-  // Ignore clicks to the same page or to empty URLs.
+  // Do nothing if click is to the same page or an empty URL.
   if (!url || url == window.location.href) {
     spf.debug.debug('    ignoring click to same page');
     // Prevent the default browser navigation to avoid reloads.
     evt.preventDefault();
     return;
   }
-  // Ignore clicks if the URL is not eligible for navigation.
-  if (!spf.nav.isNavigateEligible_(url)) {
+  if (spf.config.get('experimental-same-origin')) {
+    // Ignore clicks if the URL is not allowed (e.g. cross-domain).
+    if (!spf.nav.isAllowed_(url)) {
+      return;
+    }
+  }
+  // Ignore clicks if the URL is not eligible (e.g. limit reached).
+  if (!spf.nav.isEligible_(url)) {
     return;
   }
   // Ignore clicks if the "click" event is canceled.
@@ -272,9 +300,16 @@ spf.nav.handleHistory_ = function(url, opt_state) {
   var referer = opt_state && opt_state['spf-referer'];
   var current = opt_state && opt_state['spf-current'];
   spf.debug.debug('nav.handleHistory ', '(url=', url, 'state=', opt_state, ')');
-  // Redirect if the URL is not eligible for navigation.
-  if (!spf.nav.isNavigateEligible_(url)) {
-    spf.nav.redirect(url);
+  if (spf.config.get('experimental-same-origin')) {
+    // Reload if the URL is not allowed (e.g. cross-domain).
+    if (!spf.nav.isAllowed_(url)) {
+      spf.nav.reload(url, spf.nav.ReloadReason.FORBIDDEN);
+      return;
+    }
+  }
+  // Reload if the URL is not eligible (e.g. limit reached).
+  if (!spf.nav.isEligible_(url)) {
+    spf.nav.reload(url, spf.nav.ReloadReason.INELIGIBLE);
     return;
   }
   // Ignore the change if the "history" event is canceled.
@@ -306,9 +341,16 @@ spf.nav.navigate = function(url, opt_options) {
   if (!url || url == window.location.href) {
     return;
   }
-  // Redirect if the URL is not eligible for navigation.
-  if (!spf.nav.isNavigateEligible_(url)) {
-    spf.nav.redirect(url);
+  if (spf.config.get('experimental-same-origin')) {
+    // Reload if the URL is not allowed (e.g. cross-domain).
+    if (!spf.nav.isAllowed_(url)) {
+      spf.nav.reload(url, spf.nav.ReloadReason.FORBIDDEN);
+      return;
+    }
+  }
+  // Reload if the URL is not eligible (e.g. limit reached).
+  if (!spf.nav.isEligible_(url)) {
+    spf.nav.reload(url, spf.nav.ReloadReason.INELIGIBLE);
     return;
   }
   // Navigate to the URL.
@@ -341,26 +383,26 @@ spf.nav.navigate_ = function(url, opt_options, opt_current, opt_referer,
   var options = opt_options || /** @type {spf.RequestOptions} */ ({});
 
   // Set the navigation counter.
-  var count = (parseInt(spf.state.get('nav-counter'), 10) || 0) + 1;
-  spf.state.set('nav-counter', count);
+  var count = (parseInt(spf.state.get(spf.state.Key.NAV_COUNTER), 10) || 0) + 1;
+  spf.state.set(spf.state.Key.NAV_COUNTER, count);
   // Set the navigation time.
-  spf.state.set('nav-time', spf.now());
+  spf.state.set(spf.state.Key.NAV_TIME, spf.now());
   // Set the navigation referer, stored in the history entry state object
   // to allow the correct value to be sent to the server during back/forward.
   // Only different than the current URL when navigation is in response to
   // a popState event.
   // Compare against "undefined" to allow empty referrer values in history.
   var referer = opt_referer == undefined ? window.location.href : opt_referer;
-  spf.state.set('nav-referer', referer);
+  spf.state.set(spf.state.Key.NAV_REFERER, referer);
   // The current URL will have already changed for history events, so in those
   // cases the current URL is provided from state. The opt_current should
   // always be used for history states. If it's unavailable that indicates the
   // visible page is undetermined and should not be relied upon.
   var current = opt_history ? opt_current : window.location.href;
 
-  // Redirect if the "request" event is canceled.
+  // Reload if the "request" event is canceled.
   if (!spf.nav.dispatchRequest_(url, referer, current, options)) {
-    spf.nav.redirect(url);
+    spf.nav.reload(url, spf.nav.ReloadReason.REQUEST_CANCELED);
     return;
   }
 
@@ -382,10 +424,10 @@ spf.nav.navigate_ = function(url, opt_options, opt_current, opt_referer,
   // Set the current nav request to be the prefetch, if it exists.
   var prefetches = spf.nav.prefetches_();
   var prefetchXhr = prefetches[absoluteUrl];
-  spf.state.set('nav-request', prefetchXhr);
+  spf.state.set(spf.state.Key.NAV_REQUEST, prefetchXhr);
   // Make sure there is no current nav promotion set.
-  spf.state.set('nav-promote', null);
-  spf.state.set('nav-promote-time', null);
+  spf.state.set(spf.state.Key.NAV_PROMOTE, null);
+  spf.state.set(spf.state.Key.NAV_PROMOTE_TIME, null);
 
   // Check the prefetch XHR.  If it is not done, promote the prefetch
   // to navigate.  Otherwise, navigate immediately.
@@ -396,15 +438,6 @@ spf.nav.navigate_ = function(url, opt_options, opt_current, opt_referer,
   } else {
     spf.nav.navigateSendRequest_(url, options, current, referer,
                                  !!opt_history, !!opt_reverse);
-  }
-  // TODO(nicksay): Remove deprecated "requested" event after next release.
-  //
-  // Dispatch the "navigation requested" event.  If the event is explicitly
-  // canceled, cancel this navigation and redirect.
-  var canceled = !spf.dispatch(spf.nav.DeprecatedEvents.REQUESTED,
-                               {'url': url});
-  if (canceled) {
-    spf.nav.redirect(url);
   }
 };
 
@@ -428,8 +461,8 @@ spf.nav.navigatePromotePrefetch_ = function(url, options, referer, history,
   spf.debug.debug('nav.navigatePromotePrefetch_ ', url);
   var preprocessKey = spf.nav.preprocessKey(url);
   var promoteKey = spf.nav.promoteKey(url);
-  spf.state.set('nav-promote', url);
-  spf.state.set('nav-promote-time', spf.now());
+  spf.state.set(spf.state.Key.NAV_PROMOTE, url);
+  spf.state.set(spf.state.Key.NAV_PROMOTE_TIME, spf.now());
   spf.tasks.cancel(preprocessKey);
   spf.tasks.run(promoteKey, true);
 
@@ -478,7 +511,7 @@ spf.nav.navigateSendRequest_ = function(url, options, current, referer,
     current: current,
     referer: referer
   });
-  spf.state.set('nav-request', xhr);
+  spf.state.set(spf.state.Key.NAV_REQUEST, xhr);
 
   // After the request has been sent, check for new navigation that needs
   // a history entry added.  Do this after sending the XHR to have the
@@ -525,13 +558,17 @@ spf.nav.navigateAddHistory_ = function(url, referer, handleError) {
  */
 spf.nav.handleNavigateError_ = function(options, url, err) {
   spf.debug.warn('navigate error', '(url=', url, ')');
-  spf.state.set('nav-request', null);
+  spf.state.set(spf.state.Key.NAV_REQUEST, null);
   // Ignore the error if the "error" event is canceled, but otherwise,
   // reload the page.
   if (!spf.nav.dispatchError_(url, err, options)) {
     return;
   }
-  spf.nav.redirect(url);
+  var reason = spf.nav.ReloadReason.ERROR;
+  if (err) {
+    reason += ' Message: ' + err.message;
+  }
+  spf.nav.reload(url, reason);
 };
 
 
@@ -548,20 +585,9 @@ spf.nav.handleNavigateError_ = function(options, url, err) {
  * @private
  */
 spf.nav.handleNavigatePart_ = function(options, reverse, url, partial) {
-  // Redirect if the "part process" event is canceled.
+  // Reload if the "part process" event is canceled.
   if (!spf.nav.dispatchPartProcess_(url, partial, options)) {
-    spf.nav.redirect(url);
-    return;
-  }
-
-  // TODO(nicksay): Remove deprecated "part received" event after next release.
-  //
-  // Dispatch the "navigation part received" event.  If the event is
-  // explicitly canceled, cancel this navigation and redirect.
-  var canceled = !spf.dispatch(spf.nav.DeprecatedEvents.PART_RECEIVED,
-                               {'url': url, 'part': partial});
-  if (canceled) {
-    spf.nav.redirect(url);
+    spf.nav.reload(url, spf.nav.ReloadReason.PART_PROCESS_CANCELED);
     return;
   }
 
@@ -574,26 +600,6 @@ spf.nav.handleNavigatePart_ = function(options, reverse, url, partial) {
   try {
     spf.nav.response.process(url, partial, function() {
       spf.nav.dispatchPartDone_(url, partial, options);
-      // TODO(nicksay): Remove deprecated "onPart" callback after next release.
-      //
-      // Execute the "onPart" callback and dispatch the
-      // "navigation part processed" event.  If either is explicitly canceled,
-      // cancel this navigation and redirect.
-      var canceled = !spf.nav.callback(
-          options[spf.nav.DeprecatedCallbacks.PART],
-          {'url': url, 'part': partial});
-      if (canceled) {
-        spf.nav.redirect(url);
-        return;
-      }
-      // TODO(nicksay): Remove deprecated "part processed" event after
-      // next release.
-      canceled = !spf.dispatch(spf.nav.DeprecatedEvents.PART_PROCESSED,
-                               {'url': url, 'part': partial});
-      if (canceled) {
-        spf.nav.redirect(url);
-        return;
-      }
     }, true, reverse);
   } catch (err) {
     // If an exception is caught during processing, log, execute the error
@@ -622,23 +628,23 @@ spf.nav.handleNavigatePart_ = function(options, reverse, url, partial) {
  */
 spf.nav.handleNavigateSuccess_ = function(options, reverse, original,
                                           url, response) {
-  spf.state.set('nav-request', null);
+  spf.state.set(spf.state.Key.NAV_REQUEST, null);
 
   // If this is a navigation from a promotion, manually set the
   // navigation start time.
-  if (spf.state.get('nav-promote') == original) {
+  if (spf.state.get(spf.state.Key.NAV_PROMOTE) == original) {
     var timing = response['timing'] || {};
-    timing['navigationStart'] = spf.state.get('nav-promote-time');
-    timing['spfPrefetchType'] = 'promote';
+    timing['navigationStart'] = spf.state.get(spf.state.Key.NAV_PROMOTE_TIME);
+    timing['spfPrefetched'] = true;
   }
 
   // If a multipart response was received, all processing is already done,
   // so don't fire the "process" event/callbacks.
   var multipart = response['type'] == 'multipart';
   if (!multipart) {
-    // Redirect if the "process" event is canceled.
+    // Reload if the "process" event is canceled.
     if (!spf.nav.dispatchProcess_(url, response, options)) {
-      spf.nav.redirect(url);
+      spf.nav.reload(url, spf.nav.ReloadReason.PROCESS_CANCELED);
       return;
     }
 
@@ -649,17 +655,6 @@ spf.nav.handleNavigateSuccess_ = function(options, reverse, original,
     }
   }
 
-  // TODO(nicksay): Remove deprecated "requested" event after next release.
-  //
-  // Dispatch the "navigation received" event.  If the event is explicitly
-  // canceled, cancel this navigation and redirect.
-  var canceled = !spf.dispatch(spf.nav.DeprecatedEvents.RECEIVED,
-                               {'url': url, 'response': response});
-  if (canceled) {
-    spf.nav.redirect(url);
-    return;
-  }
-
   // Process the requested response.
   try {
     // If a multipart response was received, all processing is already done,
@@ -668,23 +663,6 @@ spf.nav.handleNavigateSuccess_ = function(options, reverse, original,
     var r = /** @type {spf.SingleResponse} */ (multipart ? {} : response);
     spf.nav.response.process(url, r, function() {
       spf.nav.dispatchDone_(url, response, options);
-
-      // TODO(nicksay): Remove deprecated "onSuccess" callback after
-      // next release.
-      //
-      // Execute the "onSuccess" callback and dispatch the
-      // "navigation processed" event.
-      // NOTE: If either is explicitly canceled, nothing happens, because
-      // there is no longer an opportunity to stop navigation.
-      var canceled = !spf.nav.callback(
-          options[spf.nav.DeprecatedCallbacks.SUCCESS],
-          {'url': url, 'response': response});
-      if (canceled) {
-        return;
-      }
-      // TODO(nicksay): Remove deprecated "processed" event after next release.
-      spf.dispatch(spf.nav.DeprecatedEvents.PROCESSED,
-                   {'url': url, 'response': response});
     }, true, reverse);
   } catch (err) {
     // If an exception is caught during processing, log, execute the error
@@ -726,12 +704,13 @@ spf.nav.handleNavigateRedirect_ = function(options, redirectUrl) {
  * Cancels the current navigation request, if any.
  */
 spf.nav.cancel = function() {
-  var xhr = /** @type {XMLHttpRequest} */ (spf.state.get('nav-request'));
+  var xhr = /** @type {XMLHttpRequest} */ (
+      spf.state.get(spf.state.Key.NAV_REQUEST));
   if (xhr) {
     spf.debug.warn('aborting previous navigate ',
                    'xhr=', xhr);
     xhr.abort();
-    spf.state.set('nav-request', null);
+    spf.state.set(spf.state.Key.NAV_REQUEST, null);
   }
 };
 
@@ -764,17 +743,21 @@ spf.nav.callback = function(fn, var_args) {
  * Redirect to a URL, to be used when navigation fails or is disabled.
  *
  * @param {string} url The requested URL, without the SPF identifier.
+ * @param {string} reason The reason code causing the reload.
  */
-spf.nav.redirect = function(url) {
-  spf.debug.warn('redirecting (', 'url=', url, ')');
+spf.nav.reload = function(url, reason) {
+  spf.debug.warn('redirecting (', 'url=', url, 'reason=', reason, ')');
   spf.nav.cancel();
   spf.nav.cancelAllPrefetchesExcept();
+  // Dispatch the reload event to notify the app that a reload is required.
+  spf.nav.dispatchReload_(url, reason);
   // If the url has already changed, clear its entry to prevent browser
   // inconsistency with history management for 301 responses on reloads. Chrome
   // will identify that the starting url was the same, and replace the current
   // history state, whereas Firefox will set a new state with the post 301
   // value.
-  if (window.location.href == url) {
+  if (spf.config.get('experimental-remove-history') &&
+      window.location.href == url) {
     spf.history.removeCurrentEntry();
   }
   // Delay the redirect until after the history state has had time to clear.
@@ -921,7 +904,7 @@ spf.nav.handleLoadError_ = function(isPrefetch, options, original, url, err) {
 
   // If a prefetch has been promoted to a navigate, use the navigate error
   // handler.  Otherwise, execute the "error" callback.
-  if (isPrefetch && spf.state.get('nav-promote') == original) {
+  if (isPrefetch && spf.state.get(spf.state.Key.NAV_PROMOTE) == original) {
     spf.nav.handleNavigateError_(options, url, err);
   } else {
     // Note: pass "true" to only execute callbacks and not dispatch events.
@@ -965,7 +948,7 @@ spf.nav.handleLoadPart_ = function(isPrefetch, options, original, url,
     spf.tasks.add(promoteKey, fn);
     // If the prefetch has been promoted, run the promotion task after
     // adding it and do not perform any preprocessing.
-    if (spf.state.get('nav-promote') == original) {
+    if (spf.state.get(spf.state.Key.NAV_PROMOTE) == original) {
       spf.tasks.run(promoteKey, true);
       return;
     }
@@ -977,10 +960,6 @@ spf.nav.handleLoadPart_ = function(isPrefetch, options, original, url,
   processFn(url, partial, function() {
     // Note: pass "true" to only execute callbacks and not dispatch events.
     spf.nav.dispatchPartDone_(url, partial, options, true);
-
-    // TODO(nicksay): Remove deprecated "onPart" callback after next release.
-    spf.nav.callback(options[spf.nav.DeprecatedCallbacks.PART],
-                     {'url': url, 'part': partial});
   });
 };
 
@@ -1006,7 +985,7 @@ spf.nav.handleLoadSuccess_ = function(isPrefetch, options, original, url,
     // Abort the load/prefetch if the "process" callback is canceled.
     // Note: pass "true" to only execute callbacks and not dispatch events.
     if (!spf.nav.dispatchProcess_(url, response, options, true)) {
-      spf.nav.redirect(url);
+      spf.nav.reload(url, spf.nav.ReloadReason.PROCESS_CANCELED);
       return;
     }
 
@@ -1027,7 +1006,7 @@ spf.nav.handleLoadSuccess_ = function(isPrefetch, options, original, url,
     // adding it and do not perform any preprocessing. If it has not
     // been promoted, remove the task queues becuase a subsequent
     // request will hit the cache.
-    if (spf.state.get('nav-promote') == original) {
+    if (spf.state.get(spf.state.Key.NAV_PROMOTE) == original) {
       var fn = spf.bind(spf.nav.handleNavigateSuccess_, null,
                         options, false, original, url, response);
       spf.tasks.add(promoteKey, fn);
@@ -1050,10 +1029,6 @@ spf.nav.handleLoadSuccess_ = function(isPrefetch, options, original, url,
     processFn(url, r, function() {
       // Note: pass "true" to only execute callbacks and not dispatch events.
       spf.nav.dispatchDone_(url, response, options, true);
-
-      // TODO(nicksay): Remove deprecated "processed" callback after next release.
-      spf.nav.callback(options[spf.nav.DeprecatedCallbacks.SUCCESS],
-                       {'url': url, 'response': response});
     });
   } catch (err) {
     // If an exception is caught during processing, log, execute the error
@@ -1080,14 +1055,12 @@ spf.nav.handleLoadRedirect_ = function(isPrefetch, options, original,
   // Note that POST is not propagated with redirects.
   // Only copy callback keys to into a new object to enforce this.
   var keys = [
-      spf.nav.Callbacks.ERROR,
-      spf.nav.Callbacks.REQUEST,
-      spf.nav.Callbacks.PART_PROCESS,
-      spf.nav.Callbacks.PART_DONE,
-      spf.nav.Callbacks.PROCESS,
-      spf.nav.Callbacks.DONE,
-      spf.nav.DeprecatedCallbacks.PART,
-      spf.nav.DeprecatedCallbacks.SUCCESS
+      spf.nav.Callback.ERROR,
+      spf.nav.Callback.REQUEST,
+      spf.nav.Callback.PART_PROCESS,
+      spf.nav.Callback.PART_DONE,
+      spf.nav.Callback.PROCESS,
+      spf.nav.Callback.DONE
   ];
   var redirectOpts = /** @type {spf.RequestOptions} */ ({});
   spf.array.each(keys, function(key) {
@@ -1116,12 +1089,27 @@ spf.nav.handleLoadRedirect_ = function(isPrefetch, options, original,
 spf.nav.dispatchError_ = function(url, err, opt_options, opt_noEvents) {
   var detail = {'url': url, 'err': err};
   var options = opt_options || /** @type {spf.RequestOptions} */ ({});
-  var fn = options[spf.nav.Callbacks.ERROR];
+  var fn = options[spf.nav.Callback.ERROR];
   var proceed = spf.nav.callback(fn, detail);
   if (proceed && !opt_noEvents) {
-    proceed = spf.dispatch(spf.nav.Events.ERROR, detail);
+    proceed = spf.dispatch(spf.EventName.ERROR, detail);
   }
   return proceed;
+};
+
+
+/**
+ * Dispatches the "reload" event with the following custom event detail:
+ *   url: The current URL.
+ *   reason: The reason code and text explaining the reload.
+ *
+ * @param {string} url The target URL which is being reloaded.
+ * @param {string} reason The reason code causing the reload.
+ * @private
+ */
+spf.nav.dispatchReload_ = function(url, reason) {
+  var detail = {'url': url, 'reason': reason};
+  spf.dispatch(spf.EventName.RELOAD, detail);
 };
 
 
@@ -1137,7 +1125,7 @@ spf.nav.dispatchError_ = function(url, err, opt_options, opt_noEvents) {
  */
 spf.nav.dispatchClick_ = function(url, target) {
   var detail = {'url': url, 'target': target};
-  return spf.dispatch(spf.nav.Events.CLICK, detail);
+  return spf.dispatch(spf.EventName.CLICK, detail);
 };
 
 
@@ -1155,7 +1143,7 @@ spf.nav.dispatchClick_ = function(url, target) {
  */
 spf.nav.dispatchHistory_ = function(url, opt_referer, opt_previous) {
   var detail = {'url': url, 'referer': opt_referer, 'previous': opt_previous};
-  return spf.dispatch(spf.nav.Events.HISTORY, detail);
+  return spf.dispatch(spf.EventName.HISTORY, detail);
 };
 
 
@@ -1181,10 +1169,10 @@ spf.nav.dispatchRequest_ = function(url, referer, previous, opt_options,
                                     opt_noEvents) {
   var detail = {'url': url, 'referer': referer, 'previous': previous};
   var options = opt_options || /** @type {spf.RequestOptions} */ ({});
-  var fn = options[spf.nav.Callbacks.REQUEST];
+  var fn = options[spf.nav.Callback.REQUEST];
   var proceed = spf.nav.callback(fn, detail);
   if (proceed && !opt_noEvents) {
-    proceed = spf.dispatch(spf.nav.Events.REQUEST, detail);
+    proceed = spf.dispatch(spf.EventName.REQUEST, detail);
   }
   return proceed;
 };
@@ -1193,7 +1181,7 @@ spf.nav.dispatchRequest_ = function(url, referer, previous, opt_options,
 /**
  * Dispatches the "part process" event with the follow custom event detail:
  *   url: The requested URL, without the SPF identifier.
- *   partial: The partial response object, a part of a multipart response.
+ *   part: The partial response object, a part of a multipart response.
  *
  * If a local "onPartProcess" callback is provided, it is executed first with
  * the same detail object.  If the callback is canceled, the event is not fired.
@@ -1209,12 +1197,12 @@ spf.nav.dispatchRequest_ = function(url, referer, previous, opt_options,
  */
 spf.nav.dispatchPartProcess_ = function(url, partial, opt_options,
                                         opt_noEvents) {
-  var detail = {'url': url, 'partial': partial};
+  var detail = {'url': url, 'part': partial};
   var options = opt_options || /** @type {spf.RequestOptions} */ ({});
-  var fn = options[spf.nav.Callbacks.PART_PROCESS];
+  var fn = options[spf.nav.Callback.PART_PROCESS];
   var proceed = spf.nav.callback(fn, detail);
   if (proceed && !opt_noEvents) {
-    proceed = spf.dispatch(spf.nav.Events.PART_PROCESS, detail);
+    proceed = spf.dispatch(spf.EventName.PART_PROCESS, detail);
   }
   return proceed;
 };
@@ -1223,7 +1211,7 @@ spf.nav.dispatchPartProcess_ = function(url, partial, opt_options,
 /**
  * Dispatches the "part done" event with the follow custom event detail:
  *   url: The requested URL, without the SPF identifier.
- *   partial: The partial response object, a part of a multipart response.
+ *   part: The partial response object, a part of a multipart response.
  *
  * If a local "onPartDone" callback is provided, it is executed first with the
  * same detail object.  If the callback is canceled, the event is not fired.
@@ -1238,12 +1226,12 @@ spf.nav.dispatchPartProcess_ = function(url, partial, opt_options,
  * @private
  */
 spf.nav.dispatchPartDone_ = function(url, partial, opt_options, opt_noEvents) {
-  var detail = {'url': url, 'partial': partial};
+  var detail = {'url': url, 'part': partial};
   var options = opt_options || /** @type {spf.RequestOptions} */ ({});
-  var fn = options[spf.nav.Callbacks.PART_DONE];
+  var fn = options[spf.nav.Callback.PART_DONE];
   var proceed = spf.nav.callback(fn, detail);
   if (proceed && !opt_noEvents) {
-    proceed = spf.dispatch(spf.nav.Events.PART_DONE, detail);
+    proceed = spf.dispatch(spf.EventName.PART_DONE, detail);
   }
   return proceed;
 };
@@ -1269,10 +1257,10 @@ spf.nav.dispatchPartDone_ = function(url, partial, opt_options, opt_noEvents) {
 spf.nav.dispatchProcess_ = function(url, response, opt_options, opt_noEvents) {
   var detail = {'url': url, 'response': response};
   var options = opt_options || /** @type {spf.RequestOptions} */ ({});
-  var fn = options[spf.nav.Callbacks.PROCESS];
+  var fn = options[spf.nav.Callback.PROCESS];
   var proceed = spf.nav.callback(fn, detail);
   if (proceed && !opt_noEvents) {
-    proceed = spf.dispatch(spf.nav.Events.PROCESS, detail);
+    proceed = spf.dispatch(spf.EventName.PROCESS, detail);
   }
   return proceed;
 };
@@ -1298,10 +1286,10 @@ spf.nav.dispatchProcess_ = function(url, response, opt_options, opt_noEvents) {
 spf.nav.dispatchDone_ = function(url, response, opt_options, opt_noEvents) {
   var detail = {'url': url, 'response': response};
   var options = opt_options || /** @type {spf.RequestOptions} */ ({});
-  var fn = options[spf.nav.Callbacks.DONE];
+  var fn = options[spf.nav.Callback.DONE];
   var proceed = spf.nav.callback(fn, detail);
   if (proceed && !opt_noEvents) {
-    proceed = spf.dispatch(spf.nav.Events.DONE, detail);
+    proceed = spf.dispatch(spf.EventName.DONE, detail);
   }
   return proceed;
 };
@@ -1386,12 +1374,12 @@ spf.nav.cancelAllPrefetchesExcept = function(opt_skipUrl) {
  * @private
  */
 spf.nav.prefetches_ = function(opt_reqs) {
-  if (opt_reqs || !spf.state.has('nav-prefetches')) {
+  if (opt_reqs || !spf.state.has(spf.state.Key.NAV_PREFETCHES)) {
     return /** @type {!Object.<string, XMLHttpRequest>} */ (
-        spf.state.set('nav-prefetches', (opt_reqs || {})));
+        spf.state.set(spf.state.Key.NAV_PREFETCHES, (opt_reqs || {})));
   }
   return /** @type {!Object.<string, XMLHttpRequest>} */ (
-      spf.state.get('nav-prefetches'));
+      spf.state.get(spf.state.Key.NAV_PREFETCHES));
 };
 
 
@@ -1410,7 +1398,7 @@ spf.nav.isTouchCapablePlatform_ = function() {
 /**
  * @enum {string}
  */
-spf.nav.Callbacks = {
+spf.nav.Callback = {
   ERROR: 'onError',
   REQUEST: 'onRequest',
   PART_PROCESS: 'onPartProcess',
@@ -1423,70 +1411,59 @@ spf.nav.Callbacks = {
 /**
  * @enum {string}
  */
-spf.nav.Events = {
-  ERROR: 'error',
-  CLICK: 'click',
-  HISTORY: 'history',
-  REQUEST: 'request',
-  PART_PROCESS: 'partprocess',
-  PART_DONE: 'partdone',
-  PROCESS: 'process',
-  DONE: 'done'
-};
-
-
-/**
- * @enum {string}
- */
-spf.nav.DeprecatedCallbacks = {
-  PART: 'onPart',
-  SUCCESS: 'onSuccess'
-};
-
-
-/**
- * @enum {string}
- */
-spf.nav.DeprecatedEvents = {
-  REQUESTED: 'requested',
-  PART_RECEIVED: 'partreceived',
-  PART_PROCESSED: 'partprocessed',
-  RECEIVED: 'received',
-  PROCESSED: 'processed'
+spf.nav.ReloadReason = {
+  INELIGIBLE: (!SPF_DEBUG) ? '1' :
+      '1: Navigation not initialized or limit reached.',
+  REQUEST_CANCELED: (!SPF_DEBUG) ? '2' :
+      '2: Navigation canceled by the request event.',
+  PART_PROCESS_CANCELED: (!SPF_DEBUG) ? '3' :
+      '3: Navigation canceled by the partprocess event.',
+  PROCESS_CANCELED: (!SPF_DEBUG) ? '4' :
+      '4: Navigation canceled by the process event.',
+  FORBIDDEN: (!SPF_DEBUG) ? '9' :
+      '9: Destination forbidden by same-origin security.',
+  ERROR: (!SPF_DEBUG) ? '10' :
+      '10: An uncaught error occurred processing.'
 };
 
 
 if (spf.tracing.ENABLED) {
   (function() {
-    var nav = spf.nav;
-    nav.init = spf.tracing.instrument(nav.init, 'spf.nav.init');
-    nav.dispose = spf.tracing.instrument(nav.dispose, 'spf.nav.dispose');
-    nav.handleClick_ = spf.tracing.instrument(
-        nav.handleClick_, 'spf.nav.handleClick_');
-    nav.handleHistory_ = spf.tracing.instrument(
-        nav.handleHistory_, 'spf.nav.handleHistory_');
-    nav.navigate = spf.tracing.instrument(nav.navigate, 'spf.nav.navigate');
-    nav.navigate_ = spf.tracing.instrument(
-        nav.navigate_, 'spf.nav.navigate_');
-    nav.navigatePromotePrefetch_ = spf.tracing.instrument(
-        nav.navigatePromotePrefetch_, 'spf.nav.navigatePromotePrefetch_');
-    nav.navigateSendRequest_ = spf.tracing.instrument(
-        nav.navigateSendRequest_, 'spf.nav.navigateSendRequest_');
-    nav.handleNavigateError_ = spf.tracing.instrument(
-        nav.handleNavigateError_, 'spf.nav.handleNavigateError_');
-    nav.handleNavigatePart_ = spf.tracing.instrument(
-        nav.handleNavigatePart_, 'spf.nav.handleNavigatePart_');
-    nav.handleNavigateSuccess_ = spf.tracing.instrument(
-        nav.handleNavigateSuccess_, 'spf.nav.handleNavigateSuccess_');
-    nav.cancel = spf.tracing.instrument(nav.cancel, 'spf.nav.cancel');
-    nav.callback = spf.tracing.instrument(nav.callback, 'spf.nav.callback');
-    nav.redirect = spf.tracing.instrument(nav.redirect, 'spf.nav.redirect');
-    nav.load = spf.tracing.instrument(nav.load, 'spf.nav.load');
-    nav.handleLoadError_ = spf.tracing.instrument(
-        nav.handleLoadError_, 'spf.nav.handleLoadError_');
-    nav.handleLoadPart_ = spf.tracing.instrument(
-        nav.handleLoadPart_, 'spf.nav.handleLoadPart_');
-    nav.handleLoadSuccess_ = spf.tracing.instrument(
-        nav.handleLoadSuccess_, 'spf.nav.handleLoadSuccess_');
+    spf.nav.init = spf.tracing.instrument(
+        spf.nav.init, 'spf.nav.init');
+    spf.nav.dispose = spf.tracing.instrument(
+        spf.nav.dispose, 'spf.nav.dispose');
+    spf.nav.handleClick_ = spf.tracing.instrument(
+        spf.nav.handleClick_, 'spf.nav.handleClick_');
+    spf.nav.handleHistory_ = spf.tracing.instrument(
+        spf.nav.handleHistory_, 'spf.nav.handleHistory_');
+    spf.nav.navigate = spf.tracing.instrument(
+        spf.nav.navigate, 'spf.nav.navigate');
+    spf.nav.navigate_ = spf.tracing.instrument(
+        spf.nav.navigate_, 'spf.nav.navigate_');
+    spf.nav.navigatePromotePrefetch_ = spf.tracing.instrument(
+        spf.nav.navigatePromotePrefetch_, 'spf.nav.navigatePromotePrefetch_');
+    spf.nav.navigateSendRequest_ = spf.tracing.instrument(
+        spf.nav.navigateSendRequest_, 'spf.nav.navigateSendRequest_');
+    spf.nav.handleNavigateError_ = spf.tracing.instrument(
+        spf.nav.handleNavigateError_, 'spf.nav.handleNavigateError_');
+    spf.nav.handleNavigatePart_ = spf.tracing.instrument(
+        spf.nav.handleNavigatePart_, 'spf.nav.handleNavigatePart_');
+    spf.nav.handleNavigateSuccess_ = spf.tracing.instrument(
+        spf.nav.handleNavigateSuccess_, 'spf.nav.handleNavigateSuccess_');
+    spf.nav.cancel = spf.tracing.instrument(
+        spf.nav.cancel, 'spf.nav.cancel');
+    spf.nav.callback = spf.tracing.instrument(
+        spf.nav.callback, 'spf.nav.callback');
+    spf.nav.reload = spf.tracing.instrument(
+        spf.nav.reload, 'spf.nav.reload');
+    spf.nav.load = spf.tracing.instrument(
+        spf.nav.load, 'spf.nav.load');
+    spf.nav.handleLoadError_ = spf.tracing.instrument(
+        spf.nav.handleLoadError_, 'spf.nav.handleLoadError_');
+    spf.nav.handleLoadPart_ = spf.tracing.instrument(
+        spf.nav.handleLoadPart_, 'spf.nav.handleLoadPart_');
+    spf.nav.handleLoadSuccess_ = spf.tracing.instrument(
+        spf.nav.handleLoadSuccess_, 'spf.nav.handleLoadSuccess_');
   })();
 }

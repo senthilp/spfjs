@@ -31,11 +31,7 @@ goog.require('spf.pubsub');
 spf.main.init = function(opt_config) {
   var enable = spf.main.canInit_();
   spf.debug.info('main.init ', 'enable=', enable);
-  var config = opt_config || {};
-  for (var key in spf.config.defaults) {
-    var value = (key in config) ? config[key] : spf.config.defaults[key];
-    spf.config.set(key, value);
-  }
+  spf.config.init(opt_config);
   if (enable) {
     spf.nav.init();
   }
@@ -51,7 +47,7 @@ spf.main.init = function(opt_config) {
  */
 spf.main.canInit_ = function() {
   return !!(typeof window.history.pushState == 'function' ||
-      spf.history.getIframe().history.pushState);
+      spf.history.getIframe().contentWindow.history.pushState);
 };
 
 
@@ -102,7 +98,7 @@ spf.main.discover_();
 // Create the API by exporting aliased functions.
 // Core API functions are available on the top-level namespace.
 // Extra API functions are available on second-level namespaces.
-/** @private {Object} */
+/** @private {!Object} */
 spf.main.api_ = {
   'init': spf.main.init,
   'dispose': spf.main.dispose,
@@ -111,7 +107,7 @@ spf.main.api_ = {
   'process': spf.nav.response.process,  // TODO: Remove after deprecation.
   'prefetch': spf.nav.prefetch
 };
-/** @private {Object} */
+/** @private {!Object} */
 spf.main.extra_ = {
   'script': {
     // The bootloader API.
@@ -149,35 +145,22 @@ spf.main.extra_ = {
     'prefetch': spf.net.style.prefetch
   }
 };
-if (!SPF_COMPILED) {
-  // When not compiled, mixin the API to the existing namespace for development.
-  // Use eval to work around the "incomplete alias" warning.
-  for (var fn1 in spf.main.api_) {
-    eval('spf[fn1] = spf.main.api_[fn1]');
+// For a production/debug build, isolate access to the API.
+// For a development build, mixin the API to the existing namespace.
+var global = this;
+global['spf'] = global['spf'] || {};
+var api = global['spf'];
+for (var fn1 in spf.main.api_) {
+  api[fn1] = spf.main.api_[fn1];
+}
+// Use two-stage exporting to allow aliasing the intermediate namespaces
+// created by the bootloader (e.g. s = spf.script; s.load(...)).
+for (var ns in spf.main.extra_) {
+  for (var fn2 in spf.main.extra_[ns]) {
+    api[ns] = api[ns] || {};
+    api[ns][fn2] = spf.main.extra_[ns][fn2];
   }
-  for (var ns in spf.main.extra_) {
-    for (var fn2 in spf.main.extra_[ns]) {
-      eval('spf[ns] = spf[ns] || {};');
-      eval('spf[ns][fn2] = spf.main.extra_[ns][fn2]');
-    }
-  }
-} else {
-  // When compiled for a production/debug build, isolate access to the API.
-  (function() {
-    window['spf'] = window['spf'] || {};
-    for (var fn1 in spf.main.api_) {
-      window['spf'][fn1] = spf.main.api_[fn1];
-    }
-    // Use two-stage exporting to allow aliasing the intermediate namespaces
-    // created by the bootloader (e.g. s = spf.script; s.load(...)).
-    for (var ns in spf.main.extra_) {
-      for (var fn2 in spf.main.extra_[ns]) {
-        window['spf'][ns] = window['spf'][ns] || {};
-        window['spf'][ns][fn2] = spf.main.extra_[ns][fn2];
-      }
-    }
-  })();
 }
 
 // Signal that the API is ready with custom event.  Only supported in IE 9+.
-spf.dispatch('ready');
+spf.dispatch(spf.EventName.READY);

@@ -81,7 +81,7 @@ describe('spf.nav', function() {
   };
   var fakeHistoryReplace = function(url, state, doCallback) {
     if (doCallback) {
-      var callback = spf.state.get('history-callback');
+      var callback = spf.state.get(spf.state.Key.HISTORY_CALLBACK);
       if (callback) {
         callback(url, state);
       }
@@ -137,7 +137,7 @@ describe('spf.nav', function() {
       var absoluteUrl = spf.url.absolute(url);
       spf.nav.prefetch(url);
       spf.nav.navigate(url);
-      expect(spf.state.get('nav-promote')).toEqual(url);
+      expect(spf.state.get(spf.state.Key.NAV_PROMOTE)).toEqual(url);
 
       jasmine.Clock.tick(MOCK_DELAY + 1);
       expect(spf.nav.handleNavigateSuccess_).toHaveBeenCalled();
@@ -208,7 +208,7 @@ describe('spf.nav', function() {
       var absoluteUrl = spf.url.absolute(url);
       spf.nav.prefetch(url);
       spf.nav.navigate(url);
-      expect(spf.state.get('nav-promote')).toEqual(url);
+      expect(spf.state.get(spf.state.Key.NAV_PROMOTE)).toEqual(url);
 
       jasmine.Clock.tick(MOCK_DELAY + 1);
       expect(spf.nav.handleNavigateError_).toHaveBeenCalled();
@@ -299,11 +299,11 @@ describe('spf.nav', function() {
       spyOn(spf.nav, 'getAncestorWithHref_').andCallFake(function() {
           return {href: evt.target.href}; });
       spyOn(spf.nav, 'getAncestorWithLinkClass_').andCallFake(objFunc);
-      spyOn(spf.nav, 'isNavigateEligible_').andCallFake(falseFunc);
+      spyOn(spf.nav, 'isEligible_').andCallFake(falseFunc);
 
       spf.nav.handleClick_(evt);
 
-      expect(spf.nav.isNavigateEligible_).toHaveBeenCalled();
+      expect(spf.nav.isEligible_).toHaveBeenCalled();
       expect(evt.defaultPrevented).toEqual(false);
       expect(spf.nav.navigate_).not.toHaveBeenCalled();
     });
@@ -325,41 +325,59 @@ describe('spf.nav', function() {
   });
 
 
-  describe('isNavigateEligible', function() {
+  describe('isAllowed', function() {
+
+
+    it('respects same-origin security', function() {
+      var sameDomainUrl = '/page';
+      var crossDomainUrl = 'https://www.google.com/';
+      expect(spf.nav.isAllowed_(sameDomainUrl)).toBe(true);
+      expect(spf.nav.isAllowed_(crossDomainUrl)).toBe(false);
+    });
+
+
+  });
+
+
+  describe('isEligible', function() {
 
 
     it('respects initialization', function() {
       var url = '/page';
-      spf.state.set('nav-init', false);
-      expect(spf.nav.isNavigateEligible_(url)).toBe(false);
-      spf.state.set('nav-init', true);
-      expect(spf.nav.isNavigateEligible_(url)).toBe(true);
+      spf.state.set(spf.state.Key.NAV_INIT, false);
+      expect(spf.nav.isEligible_(url)).toBe(false);
+      spf.state.set(spf.state.Key.NAV_INIT, true);
+      expect(spf.nav.isEligible_(url)).toBe(true);
     });
 
 
     it('respects session navigation limit', function() {
       var url = '/page';
       spf.config.set('navigate-limit', 5);
-      spf.state.set('nav-counter', 5);
-      expect(spf.nav.isNavigateEligible_(url)).toBe(false);
-      spf.state.set('nav-counter', 4);
-      expect(spf.nav.isNavigateEligible_(url)).toBe(true);
+      spf.state.set(spf.state.Key.NAV_COUNTER, 5);
+      expect(spf.nav.isEligible_(url)).toBe(false);
+      spf.state.set(spf.state.Key.NAV_COUNTER, 4);
+      expect(spf.nav.isEligible_(url)).toBe(true);
       spf.config.set('navigate-limit', null);
-      spf.state.set('nav-counter', 999999);
-      expect(spf.nav.isNavigateEligible_(url)).toBe(true);
+      spf.state.set(spf.state.Key.NAV_COUNTER, 999999);
+      expect(spf.nav.isEligible_(url)).toBe(true);
     });
 
 
     it('respects session lifetime', function() {
       var url = '/page';
+      // Lifetime at 1s, age at 1s should be expired.
       spf.config.set('navigate-lifetime', 1000);
-      spf.state.set('nav-time', spf.now() - 1000);
-      expect(spf.nav.isNavigateEligible_(url)).toBe(false);
-      spf.state.set('nav-time', spf.now() - 500);
-      expect(spf.nav.isNavigateEligible_(url)).toBe(true);
+      spf.state.set(spf.state.Key.NAV_TIME, spf.now() - 1000);
+      expect(spf.nav.isEligible_(url)).toBe(false);
+      // Lifetime at 1s, age at 0.5s should be unexpired.
+      spf.state.set(spf.state.Key.NAV_TIME, spf.now() - 500);
+      expect(spf.nav.isEligible_(url)).toBe(true);
+      // Lifetime at unlimited, age at 10d should be unexpired.
       spf.config.set('navigate-lifetime', null);
-      spf.state.set('nav-time', spf.now() - (10 * 24 * 60 * 60 * 1000));
-      expect(spf.nav.isNavigateEligible_(url)).toBe(true);
+      // 864000000ms = 10d * 24hr/d * 60min/hr * 60s/min * 1000ms/s.
+      spf.state.set(spf.state.Key.NAV_TIME, spf.now() - 864000000);
+      expect(spf.nav.isEligible_(url)).toBe(true);
     });
 
 
@@ -429,7 +447,7 @@ describe('spf.nav', function() {
       var proceed = spf.nav.dispatchError_(url, err);
       var evtName = spf.dispatch.calls[0].args[0];
       expect(spf.dispatch).toHaveBeenCalled();
-      expect(evtName).toEqual('error');
+      expect(evtName).toEqual(spf.EventName.ERROR);
       expect(proceed).toBe(true);
     });
 
@@ -497,6 +515,22 @@ describe('spf.nav', function() {
   });
 
 
+  describe('dispatchReload', function() {
+
+    var url = '/page';
+
+    it('dispatches an event', function() {
+      spyOn(spf, 'dispatch').andCallThrough();
+      spf.nav.dispatchReload_(url);
+      var evtName = spf.dispatch.calls[0].args[0];
+      expect(spf.dispatch).toHaveBeenCalled();
+      expect(evtName).toEqual(spf.EventName.RELOAD);
+    });
+
+
+  });
+
+
   describe('dispatchClick', function() {
 
     var url = '/page';
@@ -508,7 +542,7 @@ describe('spf.nav', function() {
       var proceed = spf.nav.dispatchClick_(url, target);
       var evtName = spf.dispatch.calls[0].args[0];
       expect(spf.dispatch).toHaveBeenCalled();
-      expect(evtName).toEqual('click');
+      expect(evtName).toEqual(spf.EventName.CLICK);
       expect(proceed).toBe(true);
     });
 
@@ -534,7 +568,7 @@ describe('spf.nav', function() {
       var proceed = spf.nav.dispatchHistory_(url);
       var evtName = spf.dispatch.calls[0].args[0];
       expect(spf.dispatch).toHaveBeenCalled();
-      expect(evtName).toEqual('history');
+      expect(evtName).toEqual(spf.EventName.HISTORY);
       expect(proceed).toBe(true);
     });
 
@@ -562,7 +596,7 @@ describe('spf.nav', function() {
       var proceed = spf.nav.dispatchRequest_(url, referer, previous);
       var evtName = spf.dispatch.calls[0].args[0];
       expect(spf.dispatch).toHaveBeenCalled();
-      expect(evtName).toEqual('request');
+      expect(evtName).toEqual(spf.EventName.REQUEST);
       expect(proceed).toBe(true);
     });
 
@@ -641,7 +675,7 @@ describe('spf.nav', function() {
       var proceed = spf.nav.dispatchPartProcess_(url, partial);
       var evtName = spf.dispatch.calls[0].args[0];
       expect(spf.dispatch).toHaveBeenCalled();
-      expect(evtName).toEqual('partprocess');
+      expect(evtName).toEqual(spf.EventName.PART_PROCESS);
       expect(proceed).toBe(true);
     });
 
@@ -720,7 +754,7 @@ describe('spf.nav', function() {
       var proceed = spf.nav.dispatchPartDone_(url, partial);
       var evtName = spf.dispatch.calls[0].args[0];
       expect(spf.dispatch).toHaveBeenCalled();
-      expect(evtName).toEqual('partdone');
+      expect(evtName).toEqual(spf.EventName.PART_DONE);
       expect(proceed).toBe(true);
     });
 
@@ -799,7 +833,7 @@ describe('spf.nav', function() {
       var proceed = spf.nav.dispatchProcess_(url, response);
       var evtName = spf.dispatch.calls[0].args[0];
       expect(spf.dispatch).toHaveBeenCalled();
-      expect(evtName).toEqual('process');
+      expect(evtName).toEqual(spf.EventName.PROCESS);
       expect(proceed).toBe(true);
     });
 
@@ -878,7 +912,7 @@ describe('spf.nav', function() {
       var proceed = spf.nav.dispatchDone_(url, response);
       var evtName = spf.dispatch.calls[0].args[0];
       expect(spf.dispatch).toHaveBeenCalled();
-      expect(evtName).toEqual('done');
+      expect(evtName).toEqual(spf.EventName.DONE);
       expect(proceed).toBe(true);
     });
 

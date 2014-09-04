@@ -1,0 +1,8 @@
+language: python
+python:
+  - "2.7"
+before_script:
+  - make
+  - make tests
+script:
+  phantomjs build/test/run-jasmine.js build/test/runner.html

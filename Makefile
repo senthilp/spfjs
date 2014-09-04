@@ -9,49 +9,61 @@ PYTHON = $(shell command -v python || echo _missing_python_)
 
 
 # Always execute targets.
-.PHONY: default all tests demo clean reset
-.PHONY: spf debug-spf tracing-spf
-.PHONY: bootloader debug-bootloader tracing-bootloader
+.PHONY: default all tests demo lint fix clean reset
+.PHONY: spf spf-debug spf-trace
+.PHONY: boot boot-debug boot-trace
 
 
 # Require Ninja.
-default all tests demo clean: $(NINJA)
-spf debug-spf tracing-spf: $(NINJA)
-bootloader debug-bootloader tracing-bootloader: $(NINJA)
+default all tests demo lint fix: $(NINJA)
+spf spf-debug spf-trace: $(NINJA)
+boot boot-debug boot-trace: $(NINJA)
 
 
 # Pass off builds to Ninja.
 default:
 	@$(NINJA)
-clean:
-	@$(NINJA) -t clean
 all:
 	@$(NINJA) all
 spf:
 	@$(NINJA) spf
-debug-spf:
-	@$(NINJA) debug-spf
-tracing-spf:
-	@$(NINJA) tracing-spf
-bootloader:
-	@$(NINJA) bootloader
-debug-bootloader:
-	@$(NINJA) debug-bootloader
-tracing-bootloader:
-	@$(NINJA) tracing-bootloader
+spf-debug:
+	@$(NINJA) spf-debug
+spf-trace:
+	@$(NINJA) spf-trace
+boot:
+	@$(NINJA) boot
+boot-debug:
+	@$(NINJA) boot-debug
+boot-trace:
+	@$(NINJA) boot-trace
 tests:
 	@$(NINJA) tests
-	@echo "Open build/test/runner.html in your browser."
+	@if [[ $$(command -v phantomjs) ]]; then \
+			echo "Open build/test/runner.html in your browser for interactive testing."; \
+			echo "Running tests..."; \
+			phantomjs build/test/run-jasmine.js build/test/runner.html; \
+		elif [[ $$(command -v open) ]]; then \
+			echo "Opening build/test/runner.html in your browser..."; \
+			open build/test/runner.html; \
+		else \
+			echo "Open build/test/runner.html in your browser."; \
+		fi
 demo:
 	@$(NINJA) demo
 	@echo "Running demo..."
 	@cd build/demo && $(PYTHON) -m app
+lint:
+	@$(NINJA) lint
+fix:
+	@$(NINJA) fix
 
-
-# Get back to a newly-cloned state.
-reset:
+# Remove build output and files
+clean:
 	@rm -rf build build.ninja
-	@rm -rf vendor/closure-compiler vendor/jasmine vendor/ninja vendor/webpy
+# Get back to a newly-cloned state.
+reset: clean
+	@rm -rf vendor
 
 
 # Ensure a build file exists before running Ninja.

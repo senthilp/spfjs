@@ -1,0 +1,16 @@
+{
+  "name": "spf",
+  "version": "2.0.0-alpha.3",
+  "description": "A framework for navigation and page updates from YouTube",
+  "license": "MIT",
+  "homepage": "https://github.com/youtube/spfjs",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/youtube/spfjs.git"
+  },
+  "ignore": [
+    "**/.*",
+    "bower_components",
+    "node_modules"
+  ]
+}

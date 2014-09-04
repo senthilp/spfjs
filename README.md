@@ -1,4 +1,4 @@
-# SPF
+# SPF  [![Build Status](https://secure.travis-ci.org/youtube/spfjs.png?branch=master)](http://travis-ci.org/youtube/spfjs)
 
 Structured Page Fragments — or SPF for short — is a lightweight framework that
 handles navigation and updates of page sections. Using progressive
@@ -74,7 +74,7 @@ $ make
 $ cp build/spf.js YOUR_JS_DIR/
 ```
 
-Running `make` will downloaded needed packages.  You will need Python and Java
+Running `make` will download needed packages.  You will need Python and Java
 installed to build and compile.
 
 Then, add the script to your page and initialize SPF:

@@ -34,10 +34,6 @@ goog.provide('spf');
 var SPF_BOOTLOADER = false;
 
 
-/** @define {boolean} Compiler flag to remove development code. */
-var SPF_COMPILED = false;
-
-
 /** @define {boolean} Compiler flag to include debugging code. */
 var SPF_DEBUG = true;
 
@@ -93,7 +89,7 @@ spf.execute = function(fn, var_args) {
 /**
  * Dispatches a custom event.
  *
- * @param {string} name The custom event name.
+ * @param {spf.EventName} name The custom event name.
  * @param {!Object=} opt_detail The custom event detail (data).
  * @return {boolean} False if the event was canceled.
  */
@@ -102,7 +98,7 @@ spf.dispatch = function(name, opt_detail) {
     var evt = document.createEvent('CustomEvent');
     var bubbles = true;
     var cancelable = true;
-    evt.initCustomEvent('spf' + name, bubbles, cancelable, opt_detail);
+    evt.initCustomEvent(name, bubbles, cancelable, opt_detail);
     return document.dispatchEvent(evt);
   }
   return true;
@@ -121,30 +117,51 @@ spf.now = function() {
 
 
 /**
+ * @enum {string}
+ */
+spf.EventName = {
+  CLICK: 'spfclick',
+  CSS_BEFORE_UNLOAD: 'spfcssbeforeunload',
+  CSS_UNLOAD: 'spfcssunload',
+  DONE: 'spfdone',
+  ERROR: 'spferror',
+  HISTORY: 'spfhistory',
+  JS_BEFORE_UNLOAD: 'spfjsbeforeunload',
+  JS_UNLOAD: 'spfjsunload',
+  PART_DONE: 'spfpartdone',
+  PART_PROCESS: 'spfpartprocess',
+  PROCESS: 'spfprocess',
+  READY: 'spfready',
+  RELOAD: 'spfreload',
+  REQUEST: 'spfrequest'
+};
+
+
+/**
  * Type definition for a single SPF response object.
- * - css: HTML string containing <link> and <style> tags of CSS to install.
- * - html: Map of Element IDs to HTML strings containing content with which
- *      to update the Elements.
  * - attr: Map of Element IDs to maps of attibute names to attribute values
  *      to set on the Elements.
- * - js: HTML string containing <script> tags of JS to execute.
- * - title: String of the new Document title.
+ * - body: Map of Element IDs to HTML strings containing content with which
+ *      to update the Elements.
  * - cacheType: String of the type of caching to use for this response.
+ * - foot: HTML string containing <script> tags of JS to execute.
+ * - head: HTML string containing <link> and <style> tags of CSS to install.
+ * - redirect: String of a URL to request instead.
  * - timing: Map of timing attributes to timestamp numbers.
+ * - title: String of the new Document title.
  * - url: String of the correct URL for the current request. This will replace
  *      the current URL in history.
- * - redirect: String of a URL to request instead.
  *
  * @typedef {{
- *   css: (string|undefined),
- *   html: (Object.<string, string>|undefined),
  *   attr: (Object.<string, Object.<string, string>>|undefined),
- *   js: (string|undefined),
- *   title: (string|undefined),
+ *   body: (Object.<string, string>|undefined),
  *   cacheType: (string|undefined),
+ *   foot: (string|undefined),
+ *   head: (string|undefined),
+ *   redirect: (string|undefined),
  *   timing: (Object.<string, number>|undefined),
- *   url: (string|undefined),
- *   redirect: (string|undefined)
+ *   title: (string|undefined),
+ *   url: (string|undefined)
  * }}
  */
 spf.SingleResponse;
@@ -152,14 +169,14 @@ spf.SingleResponse;
 
 /**
  * Type definition for a multipart SPF response object.
- * - parts: List of response objects.
  * - cacheType: String of the type of caching to use for this response.
+ * - parts: List of response objects.
  * - timing: Map of timing attributes to timestamp numbers.
  * - type: The string "multipart".
  *
  * @typedef {{
- *   parts: (Array.<spf.SingleResponse>|undefined),
  *   cacheType: (string|undefined),
+ *   parts: (Array.<spf.SingleResponse>|undefined),
  *   timing: (Object.<string, number>|undefined),
  *   type: string
  * }}
@@ -170,29 +187,26 @@ spf.MultipartResponse;
 /**
  * Type definition for the configuration options for requesting a URL.
  * - method: optional method with which to send the request; defaults to "GET".
- * - onError: optional callback to execute if the request fails. The first
- *       argument is the requested URL; the second argument is the Error that
- *       occurred.
- * - onPart: optional callback to execute upon receiving a part of a multipart
- *       SPF response (see {@link spf.MultipartResponse}).  Called before
- *       {@code onSuccess}, once per part of multipart responses; never called
- *       for single responses. If valid "X-SPF-Response-Type: multipart" and
- *       "Transfer-Encoding: chunked" headers are sent, then this callback will
- *       be executed on-the-fly as chunks are received.  The first argument is
- *       the requested URL; the second is the partial response object.
- * - onSuccess: optional callback to execute if the request succeeds.  The first
- *       argument is the requested URL; the second is the response object.  The
- *       response object will be either a complete single response object or
- *       a complete multipart response object.
- * - postData: optional data to send with a request.  Only used if the method is
- *       set to "POST".
+ * - onDone: optional callback when either repsonse is done being processed.
+ * - onError: optional callback if an error occurs.
+ * - onPartDone: optional callback when part of a multipart response is done
+ *       being processed.
+ * - onPartProcess: optional callback when part of a multipart response will be
+ *       pocessed.
+ * - onProcess: optional callback when a single response will be processed.
+ * - onRequest: optional callback when a request will be made.
+ * - postData: optional data to send with a request.  Only used if the method
+ *       is set to "POST".
  *
  * @typedef {{
- *   postData: (ArrayBuffer|Blob|Document|FormData|null|string|undefined),
  *   method: (string|undefined),
+ *   onDone: (function(spf.EventDetail)|undefined),
  *   onError: (function(spf.EventDetail)|undefined),
- *   onPart: (function(spf.EventDetail)|undefined),
- *   onSuccess: (function(spf.EventDetail)|undefined)
+ *   onPartDone: (function(spf.EventDetail)|undefined),
+ *   onPartProcess: (function(spf.EventDetail)|undefined),
+ *   onProcess: (function(spf.EventDetail)|undefined),
+ *   onRequest: (function(spf.EventDetail)|undefined),
+ *   postData: (ArrayBuffer|Blob|Document|FormData|null|string|undefined)
  * }}
  */
 spf.RequestOptions;
@@ -200,16 +214,23 @@ spf.RequestOptions;
 
 /**
  * Type definititon for custom event detail (data), also used for callbacks.
- * - err: optional error that occurred; defined for "spferror" events
+ * - err: optional error that occurred; defined for "error" events
  * - name: optional name of the scripts or styles that will be unloaded;
  *       defined for "jsbeforeunload", "jsunload", "cssbeforeunload",
  *       and "cssunload" events.
- * - part: optional part of a multipart response; defined for "partreceived"
- *       and "partprocessed" events.
- * - response: optional complete response; defined for "received" and
- *       "processed" events.
- * - url: optional URL of the request; defined for "requested", "partreceived",
- *       "partprocessed", "received", "processed", and "error" events.
+ * - part: optional part of a multipart response; defined for "partprocess"
+ *       and "partdone" events.
+ * - previous: optional URL of the previous page; defined for "history" and
+ *       "request" events.
+ * - reason: optional reason code and text; defined for the "reload" event.
+ * - referer: optional URL of the referer page; defined for "history" and
+ *       "request" events.
+ * - response: optional complete response; defined for "process" and
+ *       "done" events.
+ * - target: optional target element; defined for "click" events.
+ * - url: optional URL of the request; defined for "error", "reload", "click",
+ *       "history", "request", "partprocess", "partdone", "process", and "done"
+ *       events.
  * - urls: optional list or URLs of scripts/styles to be unloaded; defined for
  *       "jsbeforeunload", "jsunload", "cssbeforeunload", and "cssunload"
  *       events.
@@ -218,6 +239,10 @@ spf.RequestOptions;
  *   err: (Error|undefined),
  *   name: (string|undefined),
  *   part: (spf.SingleResponse|undefined),
+ *   previous: (string|undefined),
+ *   reason: (string|undefined),
+ *   referer: (string|undefined),
+ *   target: (Element|undefined),
  *   response: (spf.SingleResponse|spf.MultipartResponse|undefined),
  *   url: (string|undefined),
  *   urls: (Array.<string>|undefined)
