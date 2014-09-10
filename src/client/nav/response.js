@@ -216,8 +216,8 @@ spf.nav.response.process = function(url, response, opt_callback, opt_navigate,
             spf.config.get('animation-class'));
         var noAnimation = (!spf.nav.response.CAN_ANIMATE_ ||
                            !spf.dom.classlist.contains(el, animationClass));
-        // Dispatch beforerender
-        spf.dispatch('beforerender', {"id": id});
+        // Dispatch spfbeforerender
+        spf.dispatch('spfbeforerender', {"id": id});
         if (noAnimation) {
           if (spf.config.get('experimental-extract-unified')) {
             // Install styles.
