@@ -198,6 +198,11 @@ spf.nav.isEligible_ = function(url) {
     spf.debug.warn('navigation not initialized');
     return false;
   }
+  // If a validator function is available in config, verify it first
+  var validator = spf.config.get('validator');
+  if(validator && !validator(url)) {
+    return false;
+  }
   // If a session limit has been set and reached, cancel.
   var count = parseInt(spf.state.get(spf.state.Key.NAV_COUNTER), 10) || 0;
   count++;
