@@ -133,7 +133,8 @@ spf.EventName = {
   PROCESS: 'spfprocess',
   READY: 'spfready',
   RELOAD: 'spfreload',
-  REQUEST: 'spfrequest'
+  REQUEST: 'spfrequest',
+  BEFORE_RENDER: 'spfbeforerender'
 };
 
 
